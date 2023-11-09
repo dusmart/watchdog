@@ -11,6 +11,7 @@ import (
 )
 
 const defaultInterval = time.Minute
+
 var config Config
 var alarms map[string]*time.Timer
 
@@ -24,16 +25,19 @@ func init() {
 	for _, p_ := range config.Projects {
 		p := p_
 		println("project: " + p.Id)
-		p.Interval = defaultInterval
-		alarms[p.Id] = time.NewTimer(p.Interval)
+		if p.Interval == 0 {
+			p.Interval = defaultInterval
+		}
+		p.currentInterval = p.Interval
+		alarms[p.Id] = time.NewTimer(p.currentInterval)
 		Execute(func() {
 			for {
 				<-alarms[p.Id].C
 				println(p.Id + " stop response")
-				msg := tgbotapi.NewMessage(p.RoomId, p.Id + " stop response")
+				msg := tgbotapi.NewMessage(p.RoomId, p.Id+" stop response")
 				bot.Send(msg)
-				p.Interval *= 2
-				alarms[p.Id].Reset(p.Interval)
+				p.currentInterval *= 2
+				alarms[p.Id].Reset(p.currentInterval)
 			}
 		})
 	}
@@ -43,27 +47,26 @@ func main() {
 	r := gin.Default()
 	r.GET("/ping/:id", func(c *gin.Context) {
 		id := c.Params.ByName("id")
-		if p, ok := config.getProject(id); ok {
-			p.Interval = defaultInterval
+		p, ok := config.getProject(id)
+		if ok {
+			alarms[id].Reset(p.Interval)
+			c.JSON(http.StatusOK, gin.H{"message": "pong" + id})
+		} else {
+			c.JSON(http.StatusOK, gin.H{"message": "invalid"})
 		}
-		if alarm, ok := alarms[id]; ok {
-			alarm.Reset(defaultInterval)
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong" + id,
-		})
 	})
 	r.Run() // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
 }
 
 type Project struct {
-	Id       string        `json:"id"`
-	RoomId   int64         `json:"roomid"`
-	Interval time.Duration `json:"interval"`
+	Id              string        `json:"id"`
+	RoomId          int64         `json:"roomid"`
+	Interval        time.Duration `json:"interval"`
+	currentInterval time.Duration
 }
 type Config struct {
 	Projects []*Project `json:"projects"`
-	Key      string    `json:"key"`
+	Key      string     `json:"key"`
 }
 
 func (c *Config) getProject(id string) (*Project, bool) {
@@ -74,7 +77,6 @@ func (c *Config) getProject(id string) (*Project, bool) {
 	}
 	return &Project{}, false
 }
-
 
 // bot.Debug = true
 // log.Printf("Authorized on account %s", bot.Self.UserName)
